@@ -132,7 +132,7 @@ impl ExecutorConfig {
     /// which has no CLI `--config` argument to draw from.
     pub fn default_path() -> PathBuf {
         if cfg!(windows) {
-            PathBuf::from(r"C:\ProgramData\PkiOrchestrator\config.toml")
+            PathBuf::from(r"C:\ProgramData\PkiExecutor\config.toml")
         } else {
             PathBuf::from("executor.toml")
         }

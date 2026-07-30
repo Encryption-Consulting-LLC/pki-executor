@@ -18,8 +18,8 @@ use windows_service::{
     service_manager::{ServiceManager, ServiceManagerAccess},
 };
 
-const SERVICE_NAME: &str = "PkiOrchestrator";
-const SERVICE_DISPLAY_NAME: &str = "PKI Orchestrator";
+const SERVICE_NAME: &str = "PkiExecutor";
+const SERVICE_DISPLAY_NAME: &str = "PKI Executor";
 
 pub fn install() -> Result<()> {
     let manager = ServiceManager::local_computer(
@@ -135,11 +135,10 @@ fn run_service() -> Result<()> {
 }
 
 fn init_file_logging() -> Result<()> {
-    let work_dir =
-        std::path::PathBuf::from(r"C:\ProgramData\PkiOrchestrator\logs");
+    let work_dir = std::path::PathBuf::from(r"C:\ProgramData\PkiExecutor\logs");
     std::fs::create_dir_all(&work_dir).ok();
     let file_appender =
-        tracing_appender::rolling::daily(work_dir, "orchestrator.log");
+        tracing_appender::rolling::daily(work_dir, "executor.log");
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
     // Leaked deliberately: the guard must live for the process lifetime to
     // flush on drop, and this process only exits via the SCM stop path above.

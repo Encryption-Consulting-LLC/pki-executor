@@ -26,7 +26,7 @@ use crate::{
 #[cfg(windows)]
 fn acquire_instance_lock() -> Result<std::fs::File> {
     use std::os::windows::fs::OpenOptionsExt;
-    let dir = std::path::Path::new(r"C:\ProgramData\PkiOrchestrator");
+    let dir = std::path::Path::new(r"C:\ProgramData\PkiExecutor");
     std::fs::create_dir_all(dir)
         .context("creating the agent data directory")?;
     std::fs::OpenOptions::new()
