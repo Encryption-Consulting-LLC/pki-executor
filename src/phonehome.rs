@@ -171,7 +171,7 @@ enum ConnectionEnd {
     Superseded,
 }
 
-/// The backend's takeover close code (mirrors `routers/orchestrator.py`).
+/// The backend's takeover close code (mirrors `routers/executor.py`).
 const CLOSE_SUPERSEDED: u16 = 4409;
 
 /// Serialize and send one progress frame. On a write failure the frame is

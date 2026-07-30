@@ -77,7 +77,7 @@ impl PowerShellExecutor for RealPowerShell {
         // `-File` binds them positionally as literal strings, but requires a
         // real `.ps1` on disk (the extension is mandatory on Windows).
         let mut file = tempfile::Builder::new()
-            .prefix("pki-orchestrator-")
+            .prefix("pki-executor-")
             .suffix(".ps1")
             .tempfile()
             .map_err(|source| PowerShellError::TempScript { source })?;

@@ -2,7 +2,7 @@
 //!
 //! Capability wire values MUST match the backend's `Capability.value`
 //! strings exactly — they are intended to cross the wire once the
-//! orchestrator talks to the backend. There is no automated sync between the
+//! executor talks to the backend. There is no automated sync between the
 //! two languages: if you add or rename a capability here, update
 //! `authz.py`'s `Capability` and `ROLE_CAPABILITIES` too.
 //!

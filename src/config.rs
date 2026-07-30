@@ -2,7 +2,7 @@
 //!
 //! v0 has no networking, so this file is loaded once at startup from disk
 //! (`--config <path>` on the CLI, or a platform default path for the
-//! service). Once the orchestrator is packed into a boot ISO, this is where
+//! service). Once the executor is packed into a boot ISO, this is where
 //! configgen-templated identity/role values will land.
 
 use std::path::{Path, PathBuf};
@@ -24,7 +24,7 @@ pub struct ExecutorConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IdentityConfig {
-    /// Correlates this orchestrator instance to a VM record on the backend.
+    /// Correlates this executor instance to a VM record on the backend.
     /// Issued by `POST /api/executor/register` alongside `agent_token`.
     /// Placeholder for vmkit's still-missing guest-correlation mechanism:
     /// today a human copies both values here by hand before the agent

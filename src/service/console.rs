@@ -36,7 +36,7 @@ fn acquire_instance_lock() -> Result<std::fs::File> {
         .share_mode(0)
         .open(dir.join("agent.lock"))
         .context(
-            "another pki-orchestrator instance is already running \
+            "another pki-executor instance is already running \
              (could not acquire agent.lock)",
         )
 }
@@ -55,7 +55,7 @@ pub fn run_loop(config: &ExecutorConfig) -> Result<()> {
     tracing::info!(
         vm_id = %config.identity.vm_id,
         command_count = registry.len(),
-        "orchestrator connecting to backend"
+        "executor connecting to backend"
     );
 
     let runtime = tokio::runtime::Runtime::new()

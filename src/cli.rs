@@ -20,10 +20,7 @@ use crate::{
 };
 
 #[derive(Parser)]
-#[command(
-    name = "pki-orchestrator",
-    about = "VM-resident PKI orchestrator agent"
-)]
+#[command(name = "pki-executor", about = "VM-resident PKI executor agent")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,

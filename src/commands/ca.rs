@@ -634,7 +634,7 @@ impl CommandHandler for CaPublishCrl {
 
         let script = "param([string]$CertEnroll) \
             $ErrorActionPreference = 'Stop'; \
-            $probeDir = Join-Path $env:TEMP ('pki-orchestrator-' + [guid]::NewGuid().ToString('N')); \
+            $probeDir = Join-Path $env:TEMP ('pki-executor-' + [guid]::NewGuid().ToString('N')); \
             New-Item -ItemType Directory -Force -Path $probeDir | Out-Null; \
             function Invoke-CertUtil([string[]]$Arguments) { \
                 & certutil @Arguments 2>&1 | Out-Null; \

@@ -1,4 +1,4 @@
-//! VM-resident PKI orchestrator agent.
+//! VM-resident PKI executor agent.
 //!
 //! See the repository README for the architecture and current scope.
 

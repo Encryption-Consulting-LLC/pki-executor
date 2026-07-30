@@ -51,7 +51,7 @@ impl CommandHandler for SystemReboot {
         ));
 
         let script = "param([string]$Delay) \
-            shutdown /r /t $Delay /c 'pki-orchestrator plan reboot'; \
+            shutdown /r /t $Delay /c 'pki-executor plan reboot'; \
             exit $LASTEXITCODE";
         let output =
             require_success(ctx.shell.run(script, &[delay.to_string()])?)?;
