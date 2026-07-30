@@ -3,7 +3,7 @@ name: Release
 # Build the VM-resident agent binary for a tag and attach it to the GitHub
 # release. Templates run Windows Server, so the x86_64-pc-windows-msvc exe is
 # what the console's clone worker embeds into each firstboot ISO
-# (ORCHESTRATOR_AGENT_PATH on the worker host).
+# (EXECUTOR_AGENT_PATH on the worker host).
 
 on:
   push:
@@ -19,8 +19,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
-      - run: cargo build --release --target x86_64-pc-windows-msvc --bin pki-orchestrator
+      - run: cargo build --release --target x86_64-pc-windows-msvc --bin pki-executor
       - name: Upload release artifact
         uses: softprops/action-gh-release@v2
         with:
-          files: target/x86_64-pc-windows-msvc/release/pki-orchestrator.exe
+          files: target/x86_64-pc-windows-msvc/release/pki-executor.exe
