@@ -14,7 +14,7 @@ use clap::{Parser, Subcommand};
 
 use crate::{
     commands::build_default_registry,
-    config::OrchestratorConfig,
+    config::ExecutorConfig,
     powershell::{PowerShellExecutor, RealPowerShell},
     report::{OpRunState, ProgressSink},
 };
@@ -89,7 +89,7 @@ pub fn run(cli: Cli) -> Result<()> {
 
 fn connect(config_path: &Path) -> Result<()> {
     let config =
-        OrchestratorConfig::load_from_file(config_path).with_context(|| {
+        ExecutorConfig::load_from_file(config_path).with_context(|| {
             format!("loading config from {}", config_path.display())
         })?;
     crate::service::console::run_loop(&config)
@@ -101,7 +101,7 @@ fn run_once(
     raw_params: Vec<String>,
 ) -> Result<()> {
     let config =
-        OrchestratorConfig::load_from_file(config_path).with_context(|| {
+        ExecutorConfig::load_from_file(config_path).with_context(|| {
             format!("loading config from {}", config_path.display())
         })?;
 

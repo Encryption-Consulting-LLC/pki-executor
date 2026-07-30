@@ -2,7 +2,7 @@ use std::{io::Write, path::Path};
 
 use pki_executor::{
     authz::Role,
-    config::{ConfigError, OrchestratorConfig},
+    config::{ConfigError, ExecutorConfig},
 };
 
 #[test]
@@ -18,7 +18,7 @@ fn parses_minimal_config() {
     )
     .unwrap();
 
-    let config = OrchestratorConfig::load_from_file(file.path()).unwrap();
+    let config = ExecutorConfig::load_from_file(file.path()).unwrap();
     assert_eq!(config.identity.vm_id, "dev-local");
     assert_eq!(config.identity.role, Role::Operator);
     assert!(config.backend.url.is_none());
@@ -37,7 +37,7 @@ fn execution_defaults_apply_when_section_omitted() {
     )
     .unwrap();
 
-    let config = OrchestratorConfig::load_from_file(file.path()).unwrap();
+    let config = ExecutorConfig::load_from_file(file.path()).unwrap();
     let expected_shell = if cfg!(windows) {
         "powershell.exe"
     } else {
@@ -50,7 +50,7 @@ fn execution_defaults_apply_when_section_omitted() {
 
 #[test]
 fn missing_file_is_a_read_error() {
-    let result = OrchestratorConfig::load_from_file(Path::new(
+    let result = ExecutorConfig::load_from_file(Path::new(
         "/nonexistent/orchestrator.toml",
     ));
     assert!(matches!(result, Err(ConfigError::Read { .. })));
@@ -60,6 +60,6 @@ fn missing_file_is_a_read_error() {
 fn malformed_toml_is_a_parse_error() {
     let mut file = tempfile::NamedTempFile::new().unwrap();
     writeln!(file, "not valid toml [[[").unwrap();
-    let result = OrchestratorConfig::load_from_file(file.path());
+    let result = ExecutorConfig::load_from_file(file.path());
     assert!(matches!(result, Err(ConfigError::Parse { .. })));
 }

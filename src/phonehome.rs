@@ -30,7 +30,7 @@ use url::Url;
 
 use crate::{
     authz::Role,
-    config::OrchestratorConfig,
+    config::ExecutorConfig,
     powershell::PowerShellExecutor,
     registry::CommandRegistry,
     report::{OpRunState, OpStatus, ProgressSink},
@@ -97,7 +97,7 @@ pub fn handle_command(
     }
 }
 
-fn connect_url(config: &OrchestratorConfig) -> Result<Url> {
+fn connect_url(config: &ExecutorConfig) -> Result<Url> {
     let base = config
         .backend
         .url
@@ -116,7 +116,7 @@ fn connect_url(config: &OrchestratorConfig) -> Result<Url> {
 /// query params — the long-lived agent token stays out of the backend's and
 /// any reverse proxy's access logs. (The backend also accepts the browser-style
 /// `?vm_id=&token=` for the manual/dev path.)
-fn connect_request(config: &OrchestratorConfig) -> Result<Request> {
+fn connect_request(config: &ExecutorConfig) -> Result<Request> {
     let url = connect_url(config)?;
     let mut request = url
         .as_str()
@@ -219,7 +219,7 @@ where
 }
 
 async fn connect_once(
-    config: &OrchestratorConfig,
+    config: &ExecutorConfig,
     registry: &Arc<CommandRegistry>,
     shell: &Arc<dyn PowerShellExecutor>,
     tx: &mpsc::UnboundedSender<OutboundProgress>,
@@ -343,7 +343,7 @@ const HEALTHY_CONNECTION_SECS: u64 = 60;
 /// returns if the config itself is unusable (e.g. no `backend.url`) — a
 /// dropped connection is retried, never treated as fatal.
 pub async fn run_forever(
-    config: &OrchestratorConfig,
+    config: &ExecutorConfig,
     registry: Arc<CommandRegistry>,
     shell: Arc<dyn PowerShellExecutor>,
 ) -> Result<()> {
@@ -512,7 +512,7 @@ mod tests {
 
     #[test]
     fn connect_url_rejects_missing_backend_url() {
-        let config = OrchestratorConfig {
+        let config = ExecutorConfig {
             identity: crate::config::IdentityConfig {
                 vm_id: "dev".into(),
                 agent_token: "tok".into(),
@@ -527,7 +527,7 @@ mod tests {
 
     #[test]
     fn connect_request_carries_identity_in_headers_not_query() {
-        let config = OrchestratorConfig {
+        let config = ExecutorConfig {
             identity: crate::config::IdentityConfig {
                 vm_id: "vm-42".into(),
                 agent_token: "secret".into(),

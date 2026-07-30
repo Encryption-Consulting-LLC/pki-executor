@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::authz::Role;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OrchestratorConfig {
+pub struct ExecutorConfig {
     pub identity: IdentityConfig,
     #[serde(default)]
     pub backend: BackendConfig,
@@ -114,7 +114,7 @@ pub enum ConfigError {
     },
 }
 
-impl OrchestratorConfig {
+impl ExecutorConfig {
     pub fn load_from_file(path: &Path) -> Result<Self, ConfigError> {
         let text = std::fs::read_to_string(path).map_err(|source| {
             ConfigError::Read {

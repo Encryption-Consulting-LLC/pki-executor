@@ -105,7 +105,7 @@ fn run_service() -> Result<()> {
         process_id: None,
     })?;
 
-    let config = crate::config::OrchestratorConfig::load_default()
+    let config = crate::config::ExecutorConfig::load_default()
         .context("loading service config")?;
 
     // The phone-home loop never returns in normal operation, so it runs on

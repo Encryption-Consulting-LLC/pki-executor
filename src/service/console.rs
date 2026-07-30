@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 
 use crate::{
     commands::build_default_registry,
-    config::OrchestratorConfig,
+    config::ExecutorConfig,
     phonehome,
     powershell::{PowerShellExecutor, RealPowerShell},
 };
@@ -46,7 +46,7 @@ fn acquire_instance_lock() -> Result<()> {
     Ok(()) // dev/CI-only path — the guard is Windows-specific
 }
 
-pub fn run_loop(config: &OrchestratorConfig) -> Result<()> {
+pub fn run_loop(config: &ExecutorConfig) -> Result<()> {
     acquire_instance_lock()?;
     let registry = Arc::new(build_default_registry());
     let shell: Arc<dyn PowerShellExecutor> =
