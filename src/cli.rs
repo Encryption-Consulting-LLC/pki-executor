@@ -33,7 +33,7 @@ pub struct Cli {
 pub enum Command {
     /// One-shot command dispatch — works on any OS; the dev/test path.
     Run {
-        #[arg(long, default_value = "orchestrator.toml")]
+        #[arg(long, default_value = "executor.toml")]
         config: PathBuf,
         /// Registered command name, e.g. `cert.verify`.
         command: String,
@@ -50,7 +50,7 @@ pub enum Command {
     /// any OS — the dev/Linux-testable path for what `service run` does on
     /// Windows under the SCM.
     Connect {
-        #[arg(long, default_value = "orchestrator.toml")]
+        #[arg(long, default_value = "executor.toml")]
         config: PathBuf,
     },
 }

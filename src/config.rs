@@ -134,7 +134,7 @@ impl ExecutorConfig {
         if cfg!(windows) {
             PathBuf::from(r"C:\ProgramData\PkiOrchestrator\config.toml")
         } else {
-            PathBuf::from("orchestrator.toml")
+            PathBuf::from("executor.toml")
         }
     }
 

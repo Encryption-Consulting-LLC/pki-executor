@@ -1,5 +1,5 @@
-# Copy this to orchestrator.toml and adjust for local dev.
-# orchestrator.toml is gitignored — never commit real identity/backend values.
+# Copy this to executor.toml and adjust for local dev.
+# executor.toml is gitignored — never commit real identity/backend values.
 
 [identity]
 # vm_id/agent_token come from `POST /api/orchestrator/register` — paste the

@@ -50,9 +50,8 @@ fn execution_defaults_apply_when_section_omitted() {
 
 #[test]
 fn missing_file_is_a_read_error() {
-    let result = ExecutorConfig::load_from_file(Path::new(
-        "/nonexistent/orchestrator.toml",
-    ));
+    let result =
+        ExecutorConfig::load_from_file(Path::new("/nonexistent/executor.toml"));
     assert!(matches!(result, Err(ConfigError::Read { .. })));
 }
 
