@@ -25,7 +25,7 @@ pub struct ExecutorConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IdentityConfig {
     /// Correlates this orchestrator instance to a VM record on the backend.
-    /// Issued by `POST /api/orchestrator/register` alongside `agent_token`.
+    /// Issued by `POST /api/executor/register` alongside `agent_token`.
     /// Placeholder for vmkit's still-missing guest-correlation mechanism:
     /// today a human copies both values here by hand before the agent
     /// connects; once isokit/configgen can bake a config into the boot ISO,

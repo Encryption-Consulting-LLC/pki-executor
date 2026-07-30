@@ -2,7 +2,7 @@
 # executor.toml is gitignored — never commit real identity/backend values.
 
 [identity]
-# vm_id/agent_token come from `POST /api/orchestrator/register` — paste the
+# vm_id/agent_token come from `POST /api/executor/register` — paste the
 # response's values here before running `connect` or `service run`.
 vm_id = "dev-local"
 agent_token = ""

@@ -1,5 +1,5 @@
 //! Phone-home client: connects outbound to the EC-PKI-Playground backend
-//! over a long-lived WebSocket (`ws /api/orchestrator/connect`), receives
+//! over a long-lived WebSocket (`ws /api/executor/connect`), receives
 //! dispatched commands, and streams their `OpRunState` progress back.
 //!
 //! The backend is the authoritative capability gate — it checks the calling
@@ -108,7 +108,7 @@ fn connect_url(config: &ExecutorConfig) -> Result<Url> {
     url.set_scheme(ws_scheme).map_err(|()| {
         anyhow::anyhow!("backend.url has an unsupported scheme")
     })?;
-    url.set_path("/api/orchestrator/connect");
+    url.set_path("/api/executor/connect");
     Ok(url)
 }
 
@@ -124,12 +124,12 @@ fn connect_request(config: &ExecutorConfig) -> Result<Request> {
         .context("building ws upgrade request")?;
     let headers = request.headers_mut();
     headers.insert(
-        "x-orchestrator-vm-id",
+        "x-executor-vm-id",
         HeaderValue::from_str(&config.identity.vm_id)
             .context("vm_id is not a valid header value")?,
     );
     headers.insert(
-        "x-orchestrator-token",
+        "x-executor-token",
         HeaderValue::from_str(&config.identity.agent_token)
             .context("agent_token is not a valid header value")?,
     );
@@ -541,15 +541,12 @@ mod tests {
         };
         let request = connect_request(&config).unwrap();
         assert_eq!(request.uri().scheme_str(), Some("ws"));
-        assert_eq!(request.uri().path(), "/api/orchestrator/connect");
+        assert_eq!(request.uri().path(), "/api/executor/connect");
         // Token must not leak into the URL (the reason for header auth).
         assert!(request.uri().query().unwrap_or("").is_empty());
+        assert_eq!(request.headers().get("x-executor-vm-id").unwrap(), "vm-42");
         assert_eq!(
-            request.headers().get("x-orchestrator-vm-id").unwrap(),
-            "vm-42"
-        );
-        assert_eq!(
-            request.headers().get("x-orchestrator-token").unwrap(),
+            request.headers().get("x-executor-token").unwrap(),
             "secret"
         );
     }
