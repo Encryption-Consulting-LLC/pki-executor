@@ -5,7 +5,7 @@
 //! so drift fails a test on whichever side forgot, instead of surfacing as
 //! a 422 on dispatch. Adding a command means updating BOTH fixture copies.
 
-use pki_orchestrator::commands::build_default_registry;
+use pki_executor::commands::build_default_registry;
 
 #[test]
 fn registry_matches_the_shared_catalog_fixture() {

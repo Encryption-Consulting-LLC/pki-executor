@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use pki_orchestrator::cli::{Cli, Command};
+use pki_executor::cli::{Cli, Command};
 use tracing_subscriber::EnvFilter;
 
 fn main() -> Result<()> {
@@ -26,5 +26,5 @@ fn main() -> Result<()> {
             .init();
     }
 
-    pki_orchestrator::cli::run(cli)
+    pki_executor::cli::run(cli)
 }

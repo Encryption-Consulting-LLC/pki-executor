@@ -6,7 +6,7 @@ use std::{
     },
 };
 
-use pki_orchestrator::{
+use pki_executor::{
     authz::{Capability, Role},
     powershell::MockPowerShell,
     registry::{
@@ -51,7 +51,7 @@ fn registry_with_spy(
     (registry, calls)
 }
 
-fn mock_shell() -> Arc<dyn pki_orchestrator::powershell::PowerShellExecutor> {
+fn mock_shell() -> Arc<dyn pki_executor::powershell::PowerShellExecutor> {
     Arc::new(MockPowerShell::new())
 }
 

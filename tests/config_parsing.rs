@@ -1,6 +1,6 @@
 use std::{io::Write, path::Path};
 
-use pki_orchestrator::{
+use pki_executor::{
     authz::Role,
     config::{ConfigError, OrchestratorConfig},
 };

@@ -1,15 +1,15 @@
 [package]
-name = "pki-orchestrator"
+name = "pki-executor"
 version = "0.1.6"
 edition = "2024"
-description = "VM-resident PKI orchestrator agent"
+description = "VM-resident PKI executor agent"
 
 [lib]
-name = "pki_orchestrator"
+name = "pki_executor"
 path = "src/lib.rs"
 
 [[bin]]
-name = "pki-orchestrator"
+name = "pki-executor"
 path = "src/main.rs"
 
 [dependencies]

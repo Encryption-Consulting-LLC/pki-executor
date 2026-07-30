@@ -5,7 +5,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use pki_orchestrator::{
+use pki_executor::{
     authz::Role, commands::build_default_registry, powershell::MockPowerShell,
     registry::DispatchError, report::NullProgressSink,
 };
