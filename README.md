@@ -1,4 +1,4 @@
-# pki-orchestrator
+# pki-executor
 
 A VM-resident agent that mediates post-boot control of a deployed VM on behalf
 of [EC-PKI-Playground](https://github.com/Arnesh-EC/EC-PKI-Playground).
@@ -7,7 +7,7 @@ of [EC-PKI-Playground](https://github.com/Arnesh-EC/EC-PKI-Playground).
 
 `configgen` generates this agent's first-boot configuration, `isokit` packs it
 into the VM's boot ISO, and `vmkit` deploys the VM. Once the VM boots, the
-orchestrator runs as a persistent Windows Service, phones home to the
+executor runs as a persistent Windows Service, phones home to the
 EC-PKI-Playground backend to establish two-way communication, and then
 executes a **role-differentiated command surface**: guests get a narrow,
 allowlisted set of commands; operators get the broad/arbitrary set, gated by
@@ -27,12 +27,12 @@ goal.
 v0 proved the core architecture — role-gated command dispatch, PowerShell
 execution, Windows Service lifecycle — with a small, real, testable slice
 and no networking at all. v1 (this revision) wires up the actual phone-home
-mechanism: the orchestrator connects out to the backend, receives dispatched
+mechanism: the executor connects out to the backend, receives dispatched
 commands, and streams their progress back — see "Phone-home" below. Still
 deliberately **not** included:
 
 - **Automatic, ISO-embedded registration.** The backend-issued `vm_id`/
-  `agent_token` pair (see below) is copied into `orchestrator.toml` by a
+  `agent_token` pair (see below) is copied into `executor.toml` by a
   human today, standing in for what a real deployment will do automatically
   once the `isokit`/`configgen` gaps below close.
 - The full ADCS command catalog from `vm-building.md` (AD DS forest
@@ -48,7 +48,7 @@ need rediscovering later:
 
 - **isokit** (`build_script_iso`) only accepts text scripts, force-decoded as
   UTF-8 with rewritten line endings — it cannot embed a compiled binary today.
-  Shipping this orchestrator's binary via the boot ISO will need a new
+  Shipping this executor's binary via the boot ISO will need a new
   binary-embedding API there.
 - **vmkit** has no guest-level communication (no VMware Tools/VIX guest-exec,
   no IP/hostname readback) — there is no existing way for the backend to
@@ -57,13 +57,13 @@ need rediscovering later:
   will eventually be baked into the config ISO automatically; today they're
   copied in by hand.
 - **configgen** has no plugin/extension point for emitting an "install the
-  orchestrator" first-boot step — only hostname/network/local-password
+  executor" first-boot step — only hostname/network/local-password
   renderers exist today.
 
 ## Phone-home
 
 `connect` (and, on Windows, `service run`) opens a long-lived WebSocket to
-`{backend.url}/api/orchestrator/connect?vm_id=&token=` and stays connected,
+`{backend.url}/api/executor/connect?vm_id=&token=` and stays connected,
 reconnecting with capped backoff on any drop. Each inbound frame is a
 dispatched command tagged with a job id and the role the backend
 authenticated the calling human as:
@@ -83,7 +83,7 @@ Progress streams back as `{"job_id": "...", "state": <OpRunState>}` frames,
 which the backend relays onto the existing `/api/ws/jobs/{job_id}` transport
 — no new frontend plumbing needed to watch it.
 
-Get a `vm_id`/`agent_token` pair via `POST /api/orchestrator/register` on the
+Get a `vm_id`/`agent_token` pair via `POST /api/executor/register` on the
 backend before running `connect`; see the backend's own docs for the request
 shape.
 
@@ -109,7 +109,7 @@ for `Role::Guest` before the handler ever runs.
 
 ### Planned (not yet implemented)
 
-The full catalog this orchestrator will eventually need, drawn from
+The full catalog this executor will eventually need, drawn from
 `pki-lab-guides/vm-building.md`'s two-tier ADCS lab (DC01/CA01/CA02/SRV1/WIN11).
 Each will be added as its own command handler once the v0 pattern above is
 validated:
@@ -163,7 +163,7 @@ validated:
 ## Usage
 
 ```sh
-cp orchestrator.example.toml orchestrator.toml
+cp executor.example.toml executor.toml
 cargo run -- run cert.verify --param path=/path/to/cert.cer
 # {"status":"running","percent":50.0,"phase":"verifying"}
 # {"status":"done","percent":100.0,"result":{"chain_ok":false,"raw":""}}
@@ -171,7 +171,7 @@ cargo run -- run cert.verify --param path=/path/to/cert.cer
 ```
 
 Each `--param key=value` becomes a command parameter; `--config` (default
-`orchestrator.toml`) selects which config file's `role` governs the dispatch.
+`executor.toml`) selects which config file's `role` governs the dispatch.
 A guest-role config rejects `powershell.exec_arbitrary` before any shell runs:
 
 ```sh
@@ -180,17 +180,17 @@ cargo run -- run powershell.exec_arbitrary --param script="echo hi"
 ```
 
 To phone home instead of dispatching locally, fill in `identity.vm_id`,
-`identity.agent_token`, and `backend.url` (from `POST /api/orchestrator/register`
-on the backend) in `orchestrator.toml`, then:
+`identity.agent_token`, and `backend.url` (from `POST /api/executor/register`
+on the backend) in `executor.toml`, then:
 
 ```sh
-cargo run -- connect --config orchestrator.toml
+cargo run -- connect --config executor.toml
 ```
 
 On Windows, to install as a service (which calls the same phone-home loop):
 
 ```powershell
-pki-orchestrator.exe service install
+pki-executor.exe service install
 ```
 
 ## Testing

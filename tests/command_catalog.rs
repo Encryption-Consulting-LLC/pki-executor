@@ -1,5 +1,5 @@
 //! Command-catalog parity: the backend hand-mirrors this registry in
-//! `EC-PKI-Playground/backend/src/app/routers/orchestrator.py`'s
+//! `EC-PKI-Playground/backend/src/app/routers/executor.py`'s
 //! `_COMMAND_CAPABILITIES`. Both sides assert against a byte-identical
 //! fixture — this one and `backend/tests/fixtures/command_catalog.json` —
 //! so drift fails a test on whichever side forgot, instead of surfacing as
