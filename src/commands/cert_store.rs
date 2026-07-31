@@ -1,8 +1,8 @@
 //! Certificate distribution commands (Phase L) — the two `certutil` moves
 //! every root-cert handoff in `vm-building.md` is built from:
 //!
-//! * `cert.addstore` — trust a carried cert in a local machine store
-//!   (CA02/SRV1 trusting the offline root).
+//! * `cert.addstore` — trust a carried cert (or CRL, `kind=crl`) in a local
+//!   machine store (CA02/SRV1 trusting the offline root).
 //! * `cert.dspublish` — publish a cert/CRL into the AD Configuration
 //!   partition. Runs **on the DC**, where the agent's LocalSystem identity
 //!   is directory-privileged — dispatching it to a mere member server would
@@ -15,13 +15,21 @@ use serde_json::json;
 
 use crate::{
     authz::Capability,
-    commands::util::{invalid, require_success, required, valid_windows_path},
+    commands::util::{
+        invalid, param, require_success, required, valid_windows_path,
+    },
     registry::{CommandContext, CommandError, CommandHandler},
 };
 
 const STORES: &[&str] = &["root", "ca"];
 
-/// `certutil -addstore -f <store> <path>` + thumbprint readback.
+/// What the carried file holds. `certutil -addstore` takes either, but only a
+/// certificate has a thumbprint to read back — parsing a CRL as an
+/// `X509Certificate2` throws, which would fail a step whose `certutil` half
+/// already succeeded.
+const KINDS: &[&str] = &["cert", "crl"];
+
+/// `certutil -addstore -f <store> <path>` + thumbprint readback (certs only).
 pub struct CertAddStore;
 
 impl CommandHandler for CertAddStore {
@@ -45,23 +53,30 @@ impl CommandHandler for CertAddStore {
         if !valid_windows_path(path) {
             return Err(invalid("path", "must be an absolute Windows path"));
         }
+        let kind = param(ctx, "kind").unwrap_or("cert");
+        if !KINDS.contains(&kind) {
+            return Err(invalid("kind", "must be 'cert' or 'crl'"));
+        }
 
         ctx.progress.report(crate::report::OpRunState::running(
             "adding to store",
             30.0,
         ));
 
-        let script = "param([string]$Store,[string]$Path) \
-            certutil -addstore -f $Store $Path | Out-Null; \
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
-            (New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($Path)).Thumbprint";
-        let args = [store.to_string(), path.to_string()];
+        let script = "param([string]$Store,[string]$Path,[string]$Kind) \
+            $out = certutil -addstore -f $Store $Path 2>&1 | Out-String; \
+            if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine($out); exit $LASTEXITCODE }; \
+            if ($Kind -eq 'crl') { '' } \
+            else { (New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($Path)).Thumbprint }";
+        let args = [store.to_string(), path.to_string(), kind.to_string()];
         let output = require_success(ctx.shell.run(script, &args)?)?;
 
+        let thumbprint = output.stdout.trim();
         let result = json!({
             "store": store,
             "path": path,
-            "thumbprint": output.stdout.trim()
+            "kind": kind,
+            "thumbprint": if thumbprint.is_empty() { serde_json::Value::Null } else { json!(thumbprint) }
         });
         ctx.progress
             .report(crate::report::OpRunState::done(result.clone()));
@@ -190,6 +205,48 @@ mod tests {
         let result = CertAddStore.execute(&ctx).unwrap();
         assert_eq!(result["thumbprint"], "AB12CD34EF56");
         assert_eq!(result["store"], "root");
+        assert_eq!(result["kind"], "cert");
+    }
+
+    #[test]
+    fn addstore_rejects_unknown_kind() {
+        let params = ctx_params(&[
+            ("store", "ca"),
+            ("path", "C:\\Transfer\\EC-Root-CA.crl"),
+            ("kind", "ctl"),
+        ]);
+        let sink = NullProgressSink;
+        let ctx = CommandContext {
+            params: &params,
+            progress: &sink,
+            shell: Arc::new(MockPowerShell::new()),
+        };
+        assert!(matches!(
+            CertAddStore.execute(&ctx),
+            Err(CommandError::InvalidParam { .. })
+        ));
+    }
+
+    #[test]
+    fn addstore_skips_the_thumbprint_readback_for_a_crl() {
+        let params = ctx_params(&[
+            ("store", "ca"),
+            ("path", "C:\\Transfer\\EC-Root-CA.crl"),
+            ("kind", "crl"),
+        ]);
+        let sink = NullProgressSink;
+        let shell = Arc::new(MockPowerShell::new());
+        shell.push_success("\n");
+        let ctx = CommandContext {
+            params: &params,
+            progress: &sink,
+            shell: shell.clone(),
+        };
+        let result = CertAddStore.execute(&ctx).unwrap();
+        assert_eq!(result["kind"], "crl");
+        assert!(result["thumbprint"].is_null());
+        let script = shell.calls.lock().unwrap()[0].clone();
+        assert!(script.contains("if ($Kind -eq 'crl') { '' }"));
     }
 
     #[test]
