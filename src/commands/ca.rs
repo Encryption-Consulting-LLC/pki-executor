@@ -814,10 +814,14 @@ impl CommandHandler for CaInstallCert {
             30.0,
         ));
 
+        // certutil reports its HRESULT on stdout, so the output is folded into
+        // the throw instead of discarded — a bare "installcert failed" says
+        // nothing about *why* (untrusted chain vs. offline CRL vs. key
+        // mismatch), which is the whole diagnosis for this step.
         let script = "param([string]$CertPath) \
             $ErrorActionPreference = 'Stop'; \
-            certutil -installcert $CertPath | Out-Null; \
-            if ($LASTEXITCODE -ne 0) { throw 'certutil -installcert failed' }; \
+            $out = certutil -installcert $CertPath 2>&1 | Out-String; \
+            if ($LASTEXITCODE -ne 0) { throw \"certutil -installcert failed: $out\" }; \
             Start-Service CertSvc; \
             (Get-Service CertSvc).Status.ToString()";
         let output =
