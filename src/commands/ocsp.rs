@@ -13,7 +13,8 @@
 //! hand-configured `ocsp.msc` dump (`$ocsp.OCSPCAConfigurationCollection |
 //! Format-List *`) before the deploy path relies on it. The step is fatal in
 //! the deploy plan, so a COM property that doesn't match reality fails the
-//! op rather than shipping a silently unconfigured responder.
+//! op rather than shipping a silently unconfigured responder — which is why
+//! the COM block labels the phase it threw in.
 
 use serde_json::json;
 
@@ -196,27 +197,35 @@ impl CommandHandler for OcspConfigureRevocation {
 
         // Replace-then-create keeps the command idempotent; RefreshTimeOut
         // (ms) both disables validity-period refresh and sets the manual
-        // interval — the lab's "15 min" GUI step.
+        // interval — the lab's "15 min" GUI step. `$stage` carries the COM
+        // block's phase into the throw: the block is one long line, so a bare
+        // COM HRESULT would otherwise surface as an opaque `char:343`.
         let script = "param([string]$Name,[string]$CaConfig,[string]$CaCertPath,[string]$Template,[string]$RefreshMinutes,[string]$BaseCrlUrls,[string]$DeltaCrlUrls,[string]$SigningFlags,[string]$ProviderClsid) \
             $ErrorActionPreference = 'Stop'; \
             if (-not (Test-Path -LiteralPath $CaCertPath)) { throw \"CA certificate not found at $CaCertPath\" }; \
             $caCertBytes = [System.IO.File]::ReadAllBytes($CaCertPath); \
-            $ocsp = New-Object -ComObject CertAdm.OCSPAdmin; \
-            $ocsp.GetConfiguration($env:COMPUTERNAME, $true); \
-            $existing = @($ocsp.OCSPCAConfigurationCollection | Where-Object { $_.Identifier -eq $Name }); \
-            if ($existing.Count -gt 0) { $ocsp.OCSPCAConfigurationCollection.DeleteCAConfiguration($Name) }; \
-            $cfg = $ocsp.OCSPCAConfigurationCollection.CreateCAConfiguration($Name, $caCertBytes); \
-            $cfg.CAConfig = $CaConfig; \
-            $cfg.SigningCertificateTemplate = $Template; \
-            $cfg.HashAlgorithm = 'SHA256'; \
-            $cfg.SigningFlags = [int]$SigningFlags; \
-            $props = New-Object -ComObject CertAdm.OCSPPropertyCollection; \
-            [void]$props.CreateProperty('BaseCrlUrls', [string[]]@($BaseCrlUrls -split ',')); \
-            if ($DeltaCrlUrls) { [void]$props.CreateProperty('DeltaCrlUrls', [string[]]@($DeltaCrlUrls -split ',')) }; \
-            [void]$props.CreateProperty('RefreshTimeOut', [int]$RefreshMinutes * 60000); \
-            $cfg.ProviderProperties = $props.GetAllProperties(); \
-            $cfg.ProviderCLSID = $ProviderClsid; \
-            $ocsp.SetConfiguration($env:COMPUTERNAME, $true); \
+            $stage = 'opening the responder configuration'; \
+            try { \
+                $ocsp = New-Object -ComObject CertAdm.OCSPAdmin; \
+                $ocsp.GetConfiguration($env:COMPUTERNAME, $true); \
+                $stage = 'creating the revocation configuration'; \
+                $existing = @($ocsp.OCSPCAConfigurationCollection | Where-Object { $_.Identifier -eq $Name }); \
+                if ($existing.Count -gt 0) { $ocsp.OCSPCAConfigurationCollection.DeleteCAConfiguration($Name) }; \
+                $cfg = $ocsp.OCSPCAConfigurationCollection.CreateCAConfiguration($Name, $caCertBytes); \
+                $stage = 'setting revocation configuration properties'; \
+                $cfg.CAConfig = $CaConfig; \
+                $cfg.SigningCertificateTemplate = $Template; \
+                $cfg.HashAlgorithm = 'SHA256'; \
+                $cfg.SigningFlags = [int]$SigningFlags; \
+                $props = New-Object -ComObject CertAdm.OCSPPropertyCollection; \
+                [void]$props.CreateProperty('BaseCrlUrls', [string[]]@($BaseCrlUrls -split ',')); \
+                if ($DeltaCrlUrls) { [void]$props.CreateProperty('DeltaCrlUrls', [string[]]@($DeltaCrlUrls -split ',')) }; \
+                [void]$props.CreateProperty('RefreshTimeOut', [int]$RefreshMinutes * 60000); \
+                $cfg.ProviderProperties = $props.GetAllProperties(); \
+                $cfg.ProviderCLSID = $ProviderClsid; \
+                $stage = 'saving the responder configuration'; \
+                $ocsp.SetConfiguration($env:COMPUTERNAME, $true) \
+            } catch { throw \"$stage failed: $($_.Exception.Message)\" }; \
             $Name";
         let args = [
             name.to_string(),
@@ -452,6 +461,31 @@ mod tests {
         let script = &shell.calls.lock().unwrap()[0];
         assert!(!script.contains("certutil"));
         assert!(script.contains("[System.IO.File]::ReadAllBytes($CaCertPath)"));
+    }
+
+    /// A raw COM HRESULT out of a single-line script says only `char:343`.
+    #[test]
+    fn configure_labels_the_com_stage_it_throws_in() {
+        let params = revocation_params();
+        let sink = NullProgressSink;
+        let shell = Arc::new(MockPowerShell::new());
+        shell.push_success("EC-Issuing-CA\n");
+        let ctx = CommandContext {
+            params: &params,
+            progress: &sink,
+            shell: Arc::clone(&shell) as _,
+        };
+        OcspConfigureRevocation.execute(&ctx).unwrap();
+        let script = &shell.calls.lock().unwrap()[0];
+        assert!(script.contains("catch { throw \"$stage failed:"));
+        for stage in [
+            "opening the responder configuration",
+            "creating the revocation configuration",
+            "setting revocation configuration properties",
+            "saving the responder configuration",
+        ] {
+            assert!(script.contains(stage), "missing stage label: {stage}");
+        }
     }
 
     #[test]
