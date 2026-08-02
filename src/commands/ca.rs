@@ -7,7 +7,9 @@
 //! the operator's domain-admin credential via the cmdlet's own `-Credential`
 //! because an Enterprise CA registers itself in AD, and returns the CSR path
 //! for the cross-signing handshake — the expected "installation is
-//! incomplete" warning is allowlisted). The follow-up commands mirror the
+//! incomplete" warning is allowlisted). `ca.install_cert` needs that same
+//! credential for that same reason, but `certutil` takes no `-Credential`, so
+//! it goes through a scheduled task instead. The follow-up commands mirror the
 //! lab's post-install passes: `ca.configure_settings` (the `certutil
 //! -setreg` batch + audit policy), `ca.configure_cdp_aia` (full
 //! flag-prefixed AIA/CDP publication arrays) and `ca.publish_crl`.
@@ -786,7 +788,51 @@ impl CommandHandler for CaSignRequest {
 
 /// The issuing-CA half of the handshake: `certutil -installcert` the signed
 /// cert carried back from the root, then start certsvc.
+///
+/// Runs under the operator's domain-admin credential for the same reason
+/// `ca.install` does — see `install_cert_script` for why that needs a
+/// scheduled task rather than a `-Credential` parameter.
 pub struct CaInstallCert;
+
+/// `certutil` has no `-Credential`, and a LocalSystem service can't turn
+/// itself into a domain admin in place, so the call is handed to a one-shot
+/// scheduled task registered as that account.
+///
+/// Both halves of the task principal are load-bearing. The password logon
+/// gives the process real network credentials, so the AD publication reaches
+/// the DC as the admin rather than as `CA02$` (no second hop to delegate).
+/// `-RunLevel Highest` gets an unfiltered admin token — a domain admin logged
+/// on to a member server is UAC-filtered by default, and a filtered token
+/// fails the local `HKLM\...\CertSvc` writes with the very
+/// `0x80070005` this indirection exists to avoid.
+///
+/// certutil reports its HRESULT on stdout, so the redirected output is folded
+/// into the throw instead of discarded — a bare "installcert failed" says
+/// nothing about *why* (untrusted chain vs. offline CRL vs. key mismatch vs.
+/// access denied), which is the whole diagnosis for this step.
+fn install_cert_script() -> &'static str {
+    "param([string]$CertPath,[string]$Username,[string]$Password) \
+     $ErrorActionPreference = 'Stop'; \
+     $work = Join-Path $env:SystemRoot ('SystemTemp\\pki-installcert-' + [guid]::NewGuid().ToString('N')); \
+     New-Item -ItemType Directory -Force -Path $work | Out-Null; \
+     $log = Join-Path $work 'out.txt'; \
+     $task = 'PkiExecutor-InstallCert-' + [guid]::NewGuid().ToString('N'); \
+     try { \
+         $action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument \"/c certutil -installcert `\"$CertPath`\" > `\"$log`\" 2>&1\"; \
+         Register-ScheduledTask -TaskName $task -Action $action -User $Username -Password $Password -RunLevel Highest | Out-Null; \
+         Start-ScheduledTask -TaskName $task; \
+         $deadline = (Get-Date).AddMinutes(4); \
+         do { Start-Sleep -Seconds 2 } while ((Get-ScheduledTask -TaskName $task).State -eq 'Running' -and (Get-Date) -lt $deadline); \
+         $rc = (Get-ScheduledTaskInfo -TaskName $task).LastTaskResult; \
+         $out = if (Test-Path -LiteralPath $log) { Get-Content -Raw -LiteralPath $log } else { '' }; \
+         if ($rc -ne 0) { throw \"certutil -installcert failed (0x$('{0:x8}' -f $rc)): $out\" }; \
+     } finally { \
+         Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue; \
+         Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue; \
+     }; \
+     Start-Service CertSvc; \
+     (Get-Service CertSvc).Status.ToString()"
+}
 
 impl CommandHandler for CaInstallCert {
     fn name(&self) -> &'static str {
@@ -809,23 +855,38 @@ impl CommandHandler for CaInstallCert {
             ));
         }
 
+        // Installing the cert publishes it into AD (NTAuthCertificates, the
+        // AIA and Enrollment Services objects) — LocalSystem on a member
+        // server can't, so this needs the same domain-admin credential the
+        // install did.
+        let username = required(ctx, "username")?;
+        if !valid_username(username) {
+            return Err(invalid(
+                "username",
+                "must be a plain, domain\\user or user@domain account name",
+            ));
+        }
+        let password = required(ctx, "password")?;
+        if !valid_secret(password) {
+            return Err(invalid(
+                "password",
+                "must be non-empty and not begin with '-'",
+            ));
+        }
+
         ctx.progress.report(crate::report::OpRunState::running(
             "installing CA certificate",
             30.0,
         ));
 
-        // certutil reports its HRESULT on stdout, so the output is folded into
-        // the throw instead of discarded — a bare "installcert failed" says
-        // nothing about *why* (untrusted chain vs. offline CRL vs. key
-        // mismatch), which is the whole diagnosis for this step.
-        let script = "param([string]$CertPath) \
-            $ErrorActionPreference = 'Stop'; \
-            $out = certutil -installcert $CertPath 2>&1 | Out-String; \
-            if ($LASTEXITCODE -ne 0) { throw \"certutil -installcert failed: $out\" }; \
-            Start-Service CertSvc; \
-            (Get-Service CertSvc).Status.ToString()";
-        let output =
-            require_success(ctx.shell.run(script, &[cert_path.to_string()])?)?;
+        let output = require_success(ctx.shell.run(
+            install_cert_script(),
+            &[
+                cert_path.to_string(),
+                username.to_string(),
+                password.to_string(),
+            ],
+        )?)?;
 
         let result = json!({
             "cert_path": cert_path,
@@ -1484,9 +1545,17 @@ mod tests {
         ));
     }
 
+    fn install_cert_params() -> HashMap<String, String> {
+        ctx_params(&[
+            ("certPath", "C:\\Transfer\\IssuingCA.crt"),
+            ("username", "ENCRYPTIONCONSU\\Administrator"),
+            ("password", "Sup3r-Secret-Pw!"),
+        ])
+    }
+
     #[test]
     fn install_cert_reports_service_status() {
-        let params = ctx_params(&[("certPath", "C:\\Transfer\\IssuingCA.crt")]);
+        let params = install_cert_params();
         let sink = NullProgressSink;
         let shell = Arc::new(MockPowerShell::new());
         shell.push_success("Running\n");
