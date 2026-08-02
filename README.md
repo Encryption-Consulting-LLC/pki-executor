@@ -107,24 +107,15 @@ through the registry, not just the forbidden one. `powershell.exec_arbitrary`
 is the load-bearing negative case: `CommandRegistry::dispatch` must reject it
 for `Role::Guest` before the handler ever runs.
 
-### Planned (not yet implemented)
+### The rest of the catalog
 
-The full catalog this executor will eventually need, drawn from
-`pki-lab-guides/vm-building.md`'s two-tier ADCS lab (DC01/CA01/CA02/SRV1/WIN11).
-Each will be added as its own command handler once the v0 pattern above is
-validated:
-
-| Planned command | Capability | Notes |
-|---|---|---|
-| `ad.promote_forest` | `VmExecArbitrary` | AD DS forest promotion + DNS |
-| `ca.install_standalone_root` | `VmExecArbitrary` | CAPolicy.inf + standalone root CA install |
-| `ca.configure_registry` | `VmExecArbitrary` | `certutil -setreg` cluster (CRL periods, auditing) |
-| `ca.configure_cdp_aia` | `VmExecArbitrary` | AIA/CDP publication URLs |
-| `ca.sign_request` / `ca.install_subordinate` | `VmExecArbitrary` | Cross-CA CSR signing pass |
-| `ca.publish_template` | `VmExecArbitrary` | `Add-CATemplate` |
-| `iis.configure_cert_enroll_share` | `VmExecArbitrary` | Web CDP/AIA hosting |
-| `ocsp.configure_revocation` | `VmExecArbitrary` | **COM-only** (`CertAdm.OCSPAdmin`) — no clean PowerShell path per the guide; will need a distinct `windows-rs`-based executor, not the `.ps1` shell-out path used everywhere else |
-| `domain.join` | `VmExecArbitrary` | `Add-Computer` |
+The table above is the v0 pattern set, not the full surface. The two-tier ADCS
+lab of `pki-lab-guides/vm-building.md` (DC01/CA01/CA02/SRV1/WIN11) is covered
+end to end today — forest promotion, both CA tiers, CDP/AIA, template
+publication, IIS CertEnroll, domain join, and the Online Responder including
+`ocsp.configure_revocation`, which drives `CertAdm.OCSPAdmin` from PowerShell
+rather than the `windows-rs` executor once thought necessary. `commands/mod.rs`
+registers every handler and is the authoritative list.
 
 ## Architecture
 

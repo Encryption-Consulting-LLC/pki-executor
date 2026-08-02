@@ -11,15 +11,18 @@
 //! skeleton "not copy-paste-ready — verify every property first"; per the
 //! Phase L canary protocol this script must be frozen against a
 //! hand-configured `ocsp.msc` dump (`$ocsp.OCSPCAConfigurationCollection |
-//! Format-List *`) before the deploy path relies on it, and the plan
-//! degrades it to best-effort so a COM mismatch can't poison the WIN11
-//! chain verification (CRL-only revocation still verifies).
+//! Format-List *`) before the deploy path relies on it. The step is fatal in
+//! the deploy plan, so a COM property that doesn't match reality fails the
+//! op rather than shipping a silently unconfigured responder.
 
 use serde_json::json;
 
 use crate::{
     authz::Capability,
-    commands::util::{invalid, param, parse_json, require_success, required},
+    commands::util::{
+        invalid, param, parse_json, require_success, required,
+        valid_windows_path,
+    },
     registry::{CommandContext, CommandError, CommandHandler},
 };
 
@@ -107,10 +110,16 @@ fn valid_url_list(raw: &str) -> bool {
 }
 
 /// Create (or replace) a named revocation configuration on the local Online
-/// Responder via `CertAdm.OCSPAdmin`: CA cert fetched from the enterprise
-/// CA, CRL-based revocation provider pointed at the supplied base/delta CRL
+/// Responder via `CertAdm.OCSPAdmin`: CA cert read from `caCertPath`, the
+/// CRL-based revocation provider pointed at the supplied base/delta CRL
 /// URLs, validity-period refresh disabled in favour of a fixed refresh
 /// interval (the lab's 15-minute setting).
+///
+/// The CA certificate is read off disk rather than fetched with
+/// `certutil -config <ca> -ca.cert`: the plan already relays it to this host
+/// (the CertEnroll copy the CDP/AIA vdir serves), and the fetch it replaces
+/// wrote to a fixed path without `-f`, which made this command succeed at
+/// most once per VM and then fail forever with a message blaming the CA.
 pub struct OcspConfigureRevocation;
 
 impl CommandHandler for OcspConfigureRevocation {
@@ -138,6 +147,13 @@ impl CommandHandler for OcspConfigureRevocation {
             return Err(invalid(
                 "caConfig",
                 "must be a 'host\\CA Common Name' config string",
+            ));
+        }
+        let ca_cert_path = required(ctx, "caCertPath")?;
+        if !valid_windows_path(ca_cert_path) {
+            return Err(invalid(
+                "caCertPath",
+                "must be an absolute Windows path",
             ));
         }
         let template = param(ctx, "template").unwrap_or("OCSPResponseSigning");
@@ -181,12 +197,10 @@ impl CommandHandler for OcspConfigureRevocation {
         // Replace-then-create keeps the command idempotent; RefreshTimeOut
         // (ms) both disables validity-period refresh and sets the manual
         // interval — the lab's "15 min" GUI step.
-        let script = "param([string]$Name,[string]$CaConfig,[string]$Template,[string]$RefreshMinutes,[string]$BaseCrlUrls,[string]$DeltaCrlUrls,[string]$SigningFlags,[string]$ProviderClsid) \
+        let script = "param([string]$Name,[string]$CaConfig,[string]$CaCertPath,[string]$Template,[string]$RefreshMinutes,[string]$BaseCrlUrls,[string]$DeltaCrlUrls,[string]$SigningFlags,[string]$ProviderClsid) \
             $ErrorActionPreference = 'Stop'; \
-            $certFile = Join-Path $env:TEMP 'ocsp-issuing-ca.cer'; \
-            certutil -config $CaConfig -ca.cert $certFile | Out-Null; \
-            if ($LASTEXITCODE -ne 0) { throw \"certutil -ca.cert failed for $CaConfig\" }; \
-            $caCertBytes = [System.IO.File]::ReadAllBytes($certFile); \
+            if (-not (Test-Path -LiteralPath $CaCertPath)) { throw \"CA certificate not found at $CaCertPath\" }; \
+            $caCertBytes = [System.IO.File]::ReadAllBytes($CaCertPath); \
             $ocsp = New-Object -ComObject CertAdm.OCSPAdmin; \
             $ocsp.GetConfiguration($env:COMPUTERNAME, $true); \
             $existing = @($ocsp.OCSPCAConfigurationCollection | Where-Object { $_.Identifier -eq $Name }); \
@@ -203,11 +217,11 @@ impl CommandHandler for OcspConfigureRevocation {
             $cfg.ProviderProperties = $props.GetAllProperties(); \
             $cfg.ProviderCLSID = $ProviderClsid; \
             $ocsp.SetConfiguration($env:COMPUTERNAME, $true); \
-            Remove-Item $certFile -ErrorAction SilentlyContinue; \
             $Name";
         let args = [
             name.to_string(),
             ca_config.to_string(),
+            ca_cert_path.to_string(),
             template.to_string(),
             refresh_minutes.to_string(),
             base_crl_urls.to_string(),
@@ -220,6 +234,7 @@ impl CommandHandler for OcspConfigureRevocation {
         let result = json!({
             "name": name,
             "ca_config": ca_config,
+            "ca_cert_path": ca_cert_path,
             "template": template,
             "refresh_minutes": refresh_minutes,
             "base_crl_urls": base_crl_urls,
@@ -302,6 +317,10 @@ mod tests {
                 "ca02.EncryptionConsulting.com\\EncryptionConsulting Issuing CA",
             ),
             (
+                "caCertPath",
+                "C:\\CertEnroll\\ca02.EncryptionConsulting.com_EncryptionConsulting Issuing CA.crt",
+            ),
+            (
                 "baseCrlUrls",
                 "http://pki.EncryptionConsulting.com/CertEnroll/EncryptionConsulting%20Issuing%20CA.crl",
             ),
@@ -314,8 +333,8 @@ mod tests {
     }
 
     #[test]
-    fn configure_requires_name_ca_config_and_base_crls() {
-        for missing in ["name", "caConfig", "baseCrlUrls"] {
+    fn configure_requires_name_ca_config_cert_path_and_base_crls() {
+        for missing in ["name", "caConfig", "caCertPath", "baseCrlUrls"] {
             let mut params = revocation_params();
             params.remove(missing);
             let sink = NullProgressSink;
@@ -348,6 +367,22 @@ mod tests {
         assert!(matches!(
             OcspConfigureRevocation.execute(&ctx),
             Err(CommandError::InvalidParam { .. })
+        ));
+    }
+
+    #[test]
+    fn configure_rejects_relative_ca_certificate_path() {
+        let mut params = revocation_params();
+        params.insert("caCertPath".into(), "issuing.crt".into());
+        let sink = NullProgressSink;
+        let ctx = CommandContext {
+            params: &params,
+            progress: &sink,
+            shell: Arc::new(MockPowerShell::new()),
+        };
+        assert!(matches!(
+            OcspConfigureRevocation.execute(&ctx),
+            Err(CommandError::InvalidParam { name, .. }) if name == "caCertPath"
         ));
     }
 
@@ -398,6 +433,25 @@ mod tests {
         assert_eq!(result["name"], "EC-Issuing-CA");
         assert_eq!(result["template"], "OCSPResponseSigning");
         assert_eq!(result["refresh_minutes"], "15");
+    }
+
+    /// The fetch this replaced wrote a fixed temp path without `-f`, so it
+    /// could only ever succeed once per VM. Nothing may shell out again.
+    #[test]
+    fn configure_reads_the_ca_certificate_off_disk() {
+        let params = revocation_params();
+        let sink = NullProgressSink;
+        let shell = Arc::new(MockPowerShell::new());
+        shell.push_success("EC-Issuing-CA\n");
+        let ctx = CommandContext {
+            params: &params,
+            progress: &sink,
+            shell: Arc::clone(&shell) as _,
+        };
+        OcspConfigureRevocation.execute(&ctx).unwrap();
+        let script = &shell.calls.lock().unwrap()[0];
+        assert!(!script.contains("certutil"));
+        assert!(script.contains("[System.IO.File]::ReadAllBytes($CaCertPath)"));
     }
 
     #[test]
