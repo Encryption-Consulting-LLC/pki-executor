@@ -1569,6 +1569,51 @@ mod tests {
     }
 
     #[test]
+    fn install_cert_requires_credentials() {
+        let mut params = install_cert_params();
+        params.remove("password");
+        let sink = NullProgressSink;
+        let ctx = CommandContext {
+            params: &params,
+            progress: &sink,
+            shell: Arc::new(MockPowerShell::new()),
+        };
+        assert!(matches!(
+            CaInstallCert.execute(&ctx),
+            Err(CommandError::MissingParam(_))
+        ));
+    }
+
+    #[test]
+    fn install_cert_runs_certutil_through_a_scheduled_task() {
+        // The whole point of the indirection: certutil must not run as the
+        // agent's LocalSystem, which AD denies on a member server.
+        let script = install_cert_script();
+        assert!(script.contains("Register-ScheduledTask"));
+        assert!(script.contains("-User $Username -Password $Password"));
+        assert!(script.contains("-RunLevel Highest"));
+        assert!(script.contains("Unregister-ScheduledTask"));
+    }
+
+    #[test]
+    fn install_cert_never_leaks_the_password() {
+        let params = install_cert_params();
+        let sink = NullProgressSink;
+        let shell = Arc::new(MockPowerShell::new());
+        shell.push_success("Running\n");
+        let ctx = CommandContext {
+            params: &params,
+            progress: &sink,
+            shell: Arc::clone(&shell) as _,
+        };
+        let result = CaInstallCert.execute(&ctx).unwrap();
+        assert!(!result.to_string().contains("Sup3r-Secret-Pw!"));
+        for script in shell.calls.lock().unwrap().iter() {
+            assert!(!script.contains("Sup3r-Secret-Pw!"));
+        }
+    }
+
+    #[test]
     fn publish_template_rejects_injection_shaped_names() {
         let params =
             ctx_params(&[("templates", "OCSPResponseSigning,$(evil)")]);
