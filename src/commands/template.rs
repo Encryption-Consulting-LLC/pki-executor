@@ -218,6 +218,55 @@ mod tests {
     }
 
     #[test]
+    fn grant_requires_credentials() {
+        let mut params = grant_params();
+        params.remove("password");
+        let sink = NullProgressSink;
+        let ctx = CommandContext {
+            params: &params,
+            progress: &sink,
+            shell: Arc::new(MockPowerShell::new()),
+        };
+        assert!(matches!(
+            TemplateGrantAccess.execute(&ctx),
+            Err(CommandError::MissingParam(_))
+        ));
+    }
+
+    #[test]
+    fn grant_binds_the_template_object_with_the_credential() {
+        // The whole point of the change: the DACL write must not go through
+        // the ambient AD: drive, which authenticates as the agent's
+        // LocalSystem and is denied WriteDacl in the Configuration NC.
+        let script = grant_access_script();
+        assert!(
+            script.contains(
+                "DirectoryEntry(\"LDAP://$dn\", $Username, $Password)"
+            )
+        );
+        assert!(script.contains("$entry.CommitChanges()"));
+        assert!(!script.contains("Set-Acl"));
+    }
+
+    #[test]
+    fn grant_never_leaks_the_password() {
+        let params = grant_params();
+        let sink = NullProgressSink;
+        let shell = Arc::new(MockPowerShell::new());
+        shell.push_success("[]");
+        let ctx = CommandContext {
+            params: &params,
+            progress: &sink,
+            shell: Arc::clone(&shell) as _,
+        };
+        let result = TemplateGrantAccess.execute(&ctx).unwrap();
+        assert!(!result.to_string().contains("Sup3r-Secret-Pw!"));
+        for script in shell.calls.lock().unwrap().iter() {
+            assert!(!script.contains("Sup3r-Secret-Pw!"));
+        }
+    }
+
+    #[test]
     fn grant_reports_the_acl_readback() {
         let params = grant_params();
         let sink = NullProgressSink;
