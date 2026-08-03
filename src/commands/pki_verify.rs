@@ -199,6 +199,34 @@ mod tests {
         assert_eq!(result["containers"]["nt_auth"], true);
     }
 
+    /// Same defect as `dns.verify`, but silent: with the array nested by
+    /// Windows PowerShell 5.1, `Invoke-WebRequest -Uri <array>` throws into the
+    /// catch, `$status` stays 0, and every multi-URL lab reports unhealthy.
+    #[test]
+    fn script_decodes_the_url_array_without_nesting_it() {
+        let params = params();
+        let shell = Arc::new(MockPowerShell::new());
+        shell.push_success(json!({"healthy": true}).to_string());
+        let ctx = CommandContext {
+            params: &params,
+            progress: &NullProgressSink,
+            shell: shell.clone(),
+        };
+
+        PkiVerify.execute(&ctx).unwrap();
+
+        let calls = shell.calls.lock().unwrap();
+        assert!(
+            !calls[0].contains("| ConvertFrom-Json)"),
+            "the decode wraps ConvertFrom-Json in @(), which nests the array on Windows PowerShell 5.1"
+        );
+        assert!(
+            calls[0]
+                .contains("$publicationUrls = $HttpUrls | ConvertFrom-Json")
+        );
+        assert!(calls[0].contains("foreach ($url in @($publicationUrls))"));
+    }
+
     #[test]
     fn rejects_non_http_artifact_url() {
         let mut params = params();

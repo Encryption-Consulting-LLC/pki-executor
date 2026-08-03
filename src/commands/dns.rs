@@ -268,8 +268,8 @@ impl CommandHandler for DnsApplyResources {
 $ErrorActionPreference = 'Stop'
 Import-Module DnsServer
 # Windows PowerShell 5.1 writes a decoded JSON array to the pipeline as one
-# object, so @(... | ConvertFrom-Json) nests it and the loop below would bind
-# every record at once. Assign first, then normalise to an array.
+# object, so wrapping the decode in an array subexpression nests it and the
+# loop below would bind every record at once. Assign first, then normalise.
 $records = $RecordsJson | ConvertFrom-Json
 $records = @($records)
 $results = foreach ($record in $records) {
@@ -388,8 +388,8 @@ impl CommandHandler for DnsVerify {
         ));
         let script = r#"param([string]$RecordsJson,[string]$Server,[string]$RequireAdSrv,[string]$Domain,[string]$HttpUrl)
 $ErrorActionPreference = 'Stop'
-# See dns.apply_resources: @(... | ConvertFrom-Json) nests the decoded array on
-# Windows PowerShell 5.1, which binds $record to every record at once.
+# See dns.apply_resources: wrapping the decode in an array subexpression nests
+# it on Windows PowerShell 5.1, binding $record to every record at once.
 $records = $RecordsJson | ConvertFrom-Json
 $records = @($records)
 $checks = foreach ($record in $records) {
@@ -675,5 +675,51 @@ mod tests {
             DnsVerify.execute(&ctx),
             Err(CommandError::InvalidParam { .. })
         ));
+    }
+
+    fn captured_script(handler: &dyn CommandHandler, stdout: &str) -> String {
+        let params = ctx_params(&[
+            ("records", planned_records_json()),
+            ("server", "192.168.1.90"),
+        ]);
+        let sink = NullProgressSink;
+        let shell = Arc::new(MockPowerShell::new());
+        shell.push_success(stdout);
+        let ctx = CommandContext {
+            params: &params,
+            progress: &sink,
+            shell: shell.clone(),
+        };
+        handler.execute(&ctx).unwrap();
+        let calls = shell.calls.lock().unwrap();
+        calls[0].clone()
+    }
+
+    /// Windows PowerShell 5.1 writes a decoded JSON array to the pipeline as a
+    /// single object, so `@($RecordsJson | ConvertFrom-Json)` nests it and the
+    /// `foreach` binds every record at once — `[string]$record.kind` then
+    /// stringifies to `A A A CNAME` and `Resolve-DnsName -Type` refuses it.
+    /// Only multi-record payloads break, which is how this survived every
+    /// single-record step. `MockPowerShell` never parses the script, so the
+    /// decode form itself is what we can pin here.
+    #[test]
+    fn both_scripts_decode_the_records_array_without_nesting_it() {
+        let scripts = [
+            captured_script(
+                &DnsApplyResources,
+                r#"{"applied":3,"records":[]}"#,
+            ),
+            captured_script(&DnsVerify, r#"{"all_verified":true}"#),
+        ];
+        for script in scripts {
+            assert!(
+                !script.contains("| ConvertFrom-Json)"),
+                "the decode wraps ConvertFrom-Json in @(), which nests the array on Windows PowerShell 5.1"
+            );
+            assert!(
+                script.contains("$records = $RecordsJson | ConvertFrom-Json")
+            );
+            assert!(script.contains("$records = @($records)"));
+        }
     }
 }
