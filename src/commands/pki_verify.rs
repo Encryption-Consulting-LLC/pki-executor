@@ -85,6 +85,13 @@ impl CommandHandler for PkiVerify {
             50.0,
         ));
 
+        // The `$publicationUrls` two-step below is load-bearing: Windows
+        // PowerShell 5.1 writes a decoded JSON array to the pipeline as one
+        // object, so `@($HttpUrls | ConvertFrom-Json)` nests it and the loop
+        // binds every URL at once. `Invoke-WebRequest -Uri <array>` then throws
+        // into the catch, leaving status 0 and reporting the whole PKI
+        // unhealthy. The script is one physical line (`\` continuations), so
+        // this cannot be a `#` comment in the script itself.
         let script = "param([string]$RootCa,[string]$IssuingCa,[string]$Templates,[string]$HttpUrls) \
             $ErrorActionPreference = 'Stop'; \
             Import-Module ActiveDirectory; \
@@ -105,7 +112,8 @@ impl CommandHandler for PkiVerify {
             $requiredTemplates = @($Templates -split ',' | ForEach-Object { $_.Trim() }); \
             $missingTemplates = @($requiredTemplates | Where-Object { $templateNames -notcontains $_ }); \
             $http = @(); \
-            foreach ($url in @($HttpUrls | ConvertFrom-Json)) { \
+            $publicationUrls = $HttpUrls | ConvertFrom-Json; \
+            foreach ($url in @($publicationUrls)) { \
                 $status = 0; \
                 try { $status = [int](Invoke-WebRequest -Uri $url -UseBasicParsing -Method Head -TimeoutSec 20).StatusCode } catch { if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode } }; \
                 $http += @{ url = $url; status = $status; ok = ($status -ge 200 -and $status -lt 300) } \
