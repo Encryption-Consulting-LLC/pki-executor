@@ -267,7 +267,11 @@ impl CommandHandler for DnsApplyResources {
         let script = r#"param([string]$RecordsJson)
 $ErrorActionPreference = 'Stop'
 Import-Module DnsServer
-$records = @($RecordsJson | ConvertFrom-Json)
+# Windows PowerShell 5.1 writes a decoded JSON array to the pipeline as one
+# object, so @(... | ConvertFrom-Json) nests it and the loop below would bind
+# every record at once. Assign first, then normalise to an array.
+$records = $RecordsJson | ConvertFrom-Json
+$records = @($records)
 $results = foreach ($record in $records) {
     $zone = [string]$record.zone
     $name = [string]$record.name
@@ -384,7 +388,10 @@ impl CommandHandler for DnsVerify {
         ));
         let script = r#"param([string]$RecordsJson,[string]$Server,[string]$RequireAdSrv,[string]$Domain,[string]$HttpUrl)
 $ErrorActionPreference = 'Stop'
-$records = @($RecordsJson | ConvertFrom-Json)
+# See dns.apply_resources: @(... | ConvertFrom-Json) nests the decoded array on
+# Windows PowerShell 5.1, which binds $record to every record at once.
+$records = $RecordsJson | ConvertFrom-Json
+$records = @($records)
 $checks = foreach ($record in $records) {
     if ($record.kind -eq 'PTR') {
         $answer = @(Resolve-DnsName -Name ([string]$record.name) -Type PTR -Server $Server -DnsOnly -NoHostsFile)
