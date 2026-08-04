@@ -15,6 +15,12 @@
 //! the deploy plan, so a COM property that doesn't match reality fails the
 //! op rather than shipping a silently unconfigured responder — which is why
 //! the COM block labels the phase it threw in.
+//!
+//! `SigningFlags` is the one property no longer on that footing: it is composed
+//! from the documented `OCSP_SF_*` values and its two documented constraints are
+//! asserted in tests, because guessing it is exactly what shipped a responder
+//! that reported itself configured and answered HTTP 500 to every request. The
+//! remaining provider properties are still canary.
 
 use serde_json::json;
 
@@ -66,14 +72,46 @@ impl CommandHandler for OcspInstall {
     }
 }
 
-/// Default responder signing flags, composed from the documented
-/// `OCSP_SF_*` constants to match the GUI wizard's auto-enroll defaults:
-/// SILENT (0x001) | RESPONDER_ID_KEYHASH (0x004) |
-/// ALLOW_SIGNINGCERT_AUTORENEWAL (0x010) | FORCE_SIGNINGCERT_ISSUER_ISCA
-/// (0x020) | AUTODISCOVER_SIGNINGCERT (0x040) |
-/// ALLOW_SIGNINGCERT_AUTOENROLLMENT (0x100). UNVERIFIED against a real
-/// responder — canary; freeze against the ocsp.msc dump before relying on it.
-const OCSP_SIGNING_FLAGS: u32 = 0x175;
+// Signing flags for a revocation configuration, from the table on
+// `IOCSPCAConfiguration::put_SigningFlags` (certadm.h). The names below were
+// right all along; an earlier revision paired each with the value of the flag
+// one slot beneath it and hardcoded the sum as `0x175`, which set
+// MANUAL_ASSIGN_SIGNINGCERT (an administrator supplies the certificate) while
+// nothing here ever assigns `SigningCertificate`. A responder configured that
+// way reads back perfectly over COM -- `configured: true`, a template, a
+// CAConfig -- and answers every request with HTTP 500, because
+// `ErrorCode 0x8009100E CRYPT_E_SIGNER_NOT_FOUND` means it has no signer at all.
+//
+// So they are declared and composed rather than summed by hand, and the two
+// documented constraints are asserted in the tests below:
+//   * exactly one of USE_CACERT / AUTODISCOVER_SIGNINGCERT /
+//     MANUAL_ASSIGN_SIGNINGCERT must be set;
+//   * AUTOENROLLMENT additionally requires AUTODISCOVER_SIGNINGCERT.
+const OCSP_SF_SILENT: u32 = 0x001;
+const OCSP_SF_ALLOW_SIGNINGCERT_AUTORENEWAL: u32 = 0x004;
+const OCSP_SF_FORCE_SIGNINGCERT_ISSUER_ISCA: u32 = 0x008;
+const OCSP_SF_AUTODISCOVER_SIGNINGCERT: u32 = 0x010;
+const OCSP_SF_RESPONDER_ID_KEYHASH: u32 = 0x040;
+const OCSP_SF_ALLOW_SIGNINGCERT_AUTOENROLLMENT: u32 = 0x200;
+// The two certificate sources this lab does not use, named so the exclusivity
+// constraint can be asserted rather than assumed: USE_CACERT needs the responder
+// on the CA host, and MANUAL_ASSIGN is what `0x175` wrongly selected.
+#[cfg(test)]
+const OCSP_SF_USE_CACERT: u32 = 0x002;
+#[cfg(test)]
+const OCSP_SF_MANUAL_ASSIGN_SIGNINGCERT: u32 = 0x020;
+
+/// Default responder signing flags: discover and auto-enroll a delegated signing
+/// certificate issued by the configured CA, renew it silently, and identify
+/// responses by key hash. NONCE support is deliberately absent -- Windows
+/// CryptoAPI clients don't send nonces, and enabling it suppresses response
+/// caching. It was only ever set as a side effect of the shifted values.
+const OCSP_SIGNING_FLAGS: u32 = OCSP_SF_SILENT
+    | OCSP_SF_ALLOW_SIGNINGCERT_AUTORENEWAL
+    | OCSP_SF_FORCE_SIGNINGCERT_ISSUER_ISCA
+    | OCSP_SF_AUTODISCOVER_SIGNINGCERT
+    | OCSP_SF_RESPONDER_ID_KEYHASH
+    | OCSP_SF_ALLOW_SIGNINGCERT_AUTOENROLLMENT;
 
 /// CLSID of the Microsoft CRL-based revocation provider.
 const CRL_PROVIDER_CLSID: &str = "{4956d17f-88fd-4198-b287-1e6e65883b19}";
@@ -552,5 +590,46 @@ mod tests {
             OcspInstall.execute(&ctx),
             Err(CommandError::Shell(_))
         ));
+    }
+
+    /// `IOCSPCAConfiguration::put_SigningFlags`: "you must specify one of the
+    /// values OCSP_SF_USE_CACERT, OCSP_SF_AUTODISCOVER_SIGNINGCERT, or
+    /// OCSP_SF_MANUAL_ASSIGN_SIGNINGCERT". `0x175` set two of the three, which is
+    /// how the responder ended up waiting for a certificate nobody assigns.
+    #[test]
+    fn signing_flags_pick_exactly_one_certificate_source() {
+        let sources = [
+            OCSP_SF_USE_CACERT,
+            OCSP_SF_AUTODISCOVER_SIGNINGCERT,
+            OCSP_SF_MANUAL_ASSIGN_SIGNINGCERT,
+        ];
+        let selected = sources
+            .iter()
+            .filter(|flag| OCSP_SIGNING_FLAGS & *flag != 0)
+            .count();
+        assert_eq!(selected, 1, "flags = {OCSP_SIGNING_FLAGS:#05x}");
+        assert_eq!(
+            OCSP_SIGNING_FLAGS & OCSP_SF_AUTODISCOVER_SIGNINGCERT,
+            OCSP_SF_AUTODISCOVER_SIGNINGCERT
+        );
+    }
+
+    /// Same page: "If you specify OCSP_SF_ALLOW_SIGNINGCERT_AUTOENROLLMENT, you
+    /// must also specify OCSP_SF_AUTODISCOVER_SIGNINGCERT."
+    #[test]
+    fn signing_cert_autoenrollment_implies_autodiscovery() {
+        if OCSP_SIGNING_FLAGS & OCSP_SF_ALLOW_SIGNINGCERT_AUTOENROLLMENT != 0 {
+            assert_ne!(
+                OCSP_SIGNING_FLAGS & OCSP_SF_AUTODISCOVER_SIGNINGCERT,
+                0
+            );
+        }
+    }
+
+    /// Pins the composed value so a future edit to the flag set is a visible
+    /// decision rather than a silently different number on the wire.
+    #[test]
+    fn signing_flags_compose_to_the_documented_default() {
+        assert_eq!(OCSP_SIGNING_FLAGS, 0x25D);
     }
 }
