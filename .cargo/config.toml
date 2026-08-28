@@ -1,0 +1,22 @@
+# Link the MSVC C runtime statically.
+#
+# Without this the binary imports VCRUNTIME140.dll, which is not present on a
+# clean Windows Server image -- it ships in the VC++ redistributable. The agent
+# is copied onto a freshly cloned golden image by firstboot and started by the
+# SCM, so there is nothing in that path to install a redistributable first.
+#
+# The failure it caused was silent and expensive to find: the process died at
+# load with 0xC0000135 (STATUS_DLL_NOT_FOUND) before reaching main, so
+# `pki-executor service install` printed nothing, exited non-zero, registered no
+# service, and the only visible symptom was the console's provision op timing
+# out 45 minutes later with "did not phone home". Nothing on the guest or the
+# backend named a missing DLL.
+#
+# Static linking keeps this correct on any Windows image regardless of what is
+# installed on it, which is the property that matters for a binary whose whole
+# job is to run on machines nobody has logged into yet. The alternatives --
+# baking the redistributable into every golden image, or shipping the DLLs
+# app-local beside the exe -- both have to be redone for each new image or kept
+# in sync by hand.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
