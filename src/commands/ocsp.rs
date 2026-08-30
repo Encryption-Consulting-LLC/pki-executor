@@ -316,14 +316,24 @@ impl CommandHandler for OcspVerify {
             50.0,
         ));
 
+        // `errorCode` is the responder's own verdict on each revocation
+        // configuration -- 0 means it can serve that CA, anything else is it
+        // saying it cannot, and it is the only readiness fact here worth
+        // asserting on.
+        //
+        // What is deliberately gone is the HTTP probe that used to sit beside
+        // it. It fetched `/ocsp` with a bare GET carrying no OCSP request, and
+        // Microsoft's responder answers that with 500 whether or not it is
+        // healthy -- so the backend gate asserting 2xx of it could never pass,
+        // warned on every deployment, and (sitting next to a real OCSP fault)
+        // read as corroboration rather than as the false alarm it was. A real
+        // readiness signal already exists upstream: `cert.verify` runs
+        // `certutil -verify -urlfetch`, which performs an actual OCSP exchange.
         let script = "$ErrorActionPreference = 'Stop'; \
             $ocsp = New-Object -ComObject CertAdm.OCSPAdmin; \
             $ocsp.GetConfiguration($env:COMPUTERNAME, $true); \
-            $configs = @($ocsp.OCSPCAConfigurationCollection | ForEach-Object { @{ identifier = $_.Identifier; caConfig = $_.CAConfig; template = $_.SigningCertificateTemplate; hashAlgorithm = $_.HashAlgorithm } }); \
-            $status = 0; \
-            try { $status = [int](Invoke-WebRequest -Uri 'http://localhost/ocsp' -UseBasicParsing -TimeoutSec 15).StatusCode } \
-            catch { if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode } }; \
-            @{ configurations = $configs; httpStatus = $status } | ConvertTo-Json -Depth 4";
+            $configs = @($ocsp.OCSPCAConfigurationCollection | ForEach-Object { @{ identifier = $_.Identifier; caConfig = $_.CAConfig; template = $_.SigningCertificateTemplate; hashAlgorithm = $_.HashAlgorithm; errorCode = [int]$_.ErrorCode; signingCertificate = [bool]$_.SigningCertificate } }); \
+            @{ configurations = $configs } | ConvertTo-Json -Depth 4";
         let output = require_success(ctx.shell.run(script, &[])?)?;
 
         let probe = parse_json(&output.stdout);
@@ -334,7 +344,6 @@ impl CommandHandler for OcspVerify {
         let result = json!({
             "configured": configured,
             "configurations": probe["configurations"],
-            "http_status": probe["httpStatus"],
             "raw": output.stdout
         });
         ctx.progress
@@ -532,7 +541,7 @@ mod tests {
         let sink = NullProgressSink;
         let shell = Arc::new(MockPowerShell::new());
         shell.push_success(
-            r#"{"configurations":[{"identifier":"EC-Issuing-CA","caConfig":"ca02\\EC Issuing CA","template":"OCSPResponseSigning","hashAlgorithm":"SHA256"}],"httpStatus":200}"#
+            r#"{"configurations":[{"identifier":"EC-Issuing-CA","caConfig":"ca02\\EC Issuing CA","template":"OCSPResponseSigning","hashAlgorithm":"SHA256","errorCode":0,"signingCertificate":true}]}"#
         );
         let ctx = CommandContext {
             params: &params,
@@ -541,7 +550,12 @@ mod tests {
         };
         let result = OcspVerify.execute(&ctx).unwrap();
         assert_eq!(result["configured"], true);
-        assert_eq!(result["http_status"], 200);
+        // The responder's own verdict, which the backend gate asserts on.
+        assert_eq!(result["configurations"][0]["errorCode"], 0);
+        assert_eq!(result["configurations"][0]["signingCertificate"], true);
+        // The bare-GET status is gone: a healthy responder answers it with 500,
+        // so reporting it invited a gate that no working lab could pass.
+        assert!(result.get("http_status").is_none());
     }
 
     #[test]
@@ -549,7 +563,7 @@ mod tests {
         let params = HashMap::new();
         let sink = NullProgressSink;
         let shell = Arc::new(MockPowerShell::new());
-        shell.push_success(r#"{"configurations":[],"httpStatus":0}"#);
+        shell.push_success(r#"{"configurations":[]}"#);
         let ctx = CommandContext {
             params: &params,
             progress: &sink,
