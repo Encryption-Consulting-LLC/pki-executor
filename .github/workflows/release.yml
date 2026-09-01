@@ -1,9 +1,10 @@
 name: Release
 
-# Build the VM-resident agent binary for a tag and attach it to the GitHub
-# release. Templates run Windows Server, so the x86_64-pc-windows-msvc exe is
-# what the console's clone worker embeds into each firstboot ISO
-# (EXECUTOR_AGENT_PATH on the worker host).
+# Build the VM-resident agent binaries for a tag and attach them to the GitHub
+# release. Windows Server templates run the x86_64-pc-windows-msvc exe and the
+# Linux product templates the x86_64-unknown-linux-musl one; the console's clone
+# worker embeds whichever the template calls for into each firstboot ISO
+# (EXECUTOR_AGENT_PATH / EXECUTOR_AGENT_PATH_LINUX on the worker host).
 
 on:
   push:
@@ -24,3 +25,32 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: target/x86_64-pc-windows-msvc/release/pki-executor.exe
+
+  linux-binary:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      # musl is safe here and deliberate: the crate links no OpenSSL (rustls +
+      # ring) so there is nothing that needs the system libssl, and a static
+      # binary cannot fail on the golden image's glibc the way the Windows exe
+      # once failed on a missing VC++ redistributable — a class of firstboot
+      # failure that is silent until the agent never phones home.
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --target x86_64-unknown-linux-musl --bin pki-executor
+      # Renamed on upload: the Windows job's artifact is `pki-executor.exe`, but
+      # an unsuffixed Linux `pki-executor` would collide with nothing today and
+      # everything the moment another target is added. The name is what the
+      # console's release fetch looks for.
+      - name: Name the artifact for its target
+        run: |
+          cp target/x86_64-unknown-linux-musl/release/pki-executor \
+             pki-executor-x86_64-unknown-linux-musl
+      - name: Upload release artifact
+        uses: softprops/action-gh-release@v2
+        with:
+          files: pki-executor-x86_64-unknown-linux-musl

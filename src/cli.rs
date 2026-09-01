@@ -15,7 +15,7 @@ use clap::{Parser, Subcommand};
 use crate::{
     commands::build_default_registry,
     config::ExecutorConfig,
-    powershell::{PowerShellExecutor, RealPowerShell},
+    powershell::{PowerShellExecutor, build_shell},
     report::{OpRunState, ProgressSink},
 };
 
@@ -112,7 +112,7 @@ fn run_once(
 
     let registry = build_default_registry();
     let shell: Arc<dyn PowerShellExecutor> =
-        Arc::new(RealPowerShell::new(config.execution.shell_binary.clone()));
+        build_shell(&config.execution.shell_binary);
     let sink = StdoutProgressSink;
 
     let result = registry.dispatch(

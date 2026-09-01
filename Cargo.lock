@@ -590,6 +590,7 @@ dependencies = [
  "anyhow",
  "clap",
  "futures-util",
+ "libc",
  "rustls",
  "serde",
  "serde_json",

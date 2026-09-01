@@ -15,7 +15,7 @@ use crate::{
     commands::build_default_registry,
     config::ExecutorConfig,
     phonehome,
-    powershell::{PowerShellExecutor, RealPowerShell},
+    powershell::{PowerShellExecutor, build_shell},
 };
 
 /// Acquire the machine-wide single-instance lock, held for the process
@@ -41,16 +41,52 @@ fn acquire_instance_lock() -> Result<std::fs::File> {
         )
 }
 
+/// The POSIX half of the same guard: a `flock(LOCK_EX | LOCK_NB)` held for the
+/// process lifetime (the kernel releases it on any exit, clean or not).
+///
+/// This was a bare `Ok(())` while the agent was Windows-only, and leaving it
+/// that way once Linux guests run a real systemd service would have been a
+/// silent failure mode rather than a missing nicety: two agents sharing a
+/// `vm_id` trip the backend's 4409 supersede path, whose backoff is
+/// `SUPERSEDED_DELAY_SECS` (300) — so the symptom is an agent that goes quiet
+/// for five minutes at a time, not one that obviously double-connected.
 #[cfg(not(windows))]
-fn acquire_instance_lock() -> Result<()> {
-    Ok(()) // dev/CI-only path — the guard is Windows-specific
+fn acquire_instance_lock() -> Result<std::fs::File> {
+    use std::os::fd::AsRawFd;
+
+    let dir = std::path::Path::new("/var/lib/pki-executor");
+    std::fs::create_dir_all(dir)
+        .context("creating the agent data directory")?;
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(dir.join("agent.lock"))
+        .context("opening the agent lock file")?;
+    // SAFETY: `fd` is owned by `file`, which outlives this call and is returned
+    // to the caller to hold for the process lifetime.
+    let taken =
+        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if taken != 0 {
+        anyhow::bail!(
+            "another pki-executor instance is already running \
+             (could not acquire {})",
+            dir.join("agent.lock").display()
+        );
+    }
+    Ok(file)
 }
 
 pub fn run_loop(config: &ExecutorConfig) -> Result<()> {
-    acquire_instance_lock()?;
+    // Bound to a named local, not dropped at the end of this statement: the
+    // lock lives in the returned handle, so `acquire_instance_lock()?;` would
+    // release it again immediately and guard nothing at all. That is what the
+    // Windows path did — it took a share-mode-0 handle and let it fall out of
+    // scope before `run_forever` ever connected.
+    let _instance_lock = acquire_instance_lock()?;
     let registry = Arc::new(build_default_registry());
     let shell: Arc<dyn PowerShellExecutor> =
-        Arc::new(RealPowerShell::new(config.execution.shell_binary.clone()));
+        build_shell(&config.execution.shell_binary);
 
     tracing::info!(
         vm_id = %config.identity.vm_id,

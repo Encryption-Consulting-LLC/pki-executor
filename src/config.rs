@@ -72,7 +72,11 @@ fn default_shell_binary() -> String {
     if cfg!(windows) {
         "powershell.exe".to_string()
     } else {
-        "pwsh".to_string()
+        // The Linux product templates' own shell. A dev box that wants to
+        // exercise the Windows handlers still sets this to `pwsh` explicitly —
+        // `powershell::build_shell` picks the matching implementation from the
+        // name, so that keeps working without a second config knob.
+        "/bin/bash".to_string()
     }
 }
 
@@ -128,13 +132,19 @@ impl ExecutorConfig {
         })
     }
 
-    /// Platform default config path — used by the Windows Service path,
-    /// which has no CLI `--config` argument to draw from.
+    /// Platform default config path — used by the Windows Service path, which
+    /// has no CLI `--config` argument to draw from.
+    ///
+    /// The Linux arm must match `40-install-executor.sh` byte for byte: that
+    /// script installs the rendered `executor.toml` to this path with mode
+    /// 0600, and the systemd unit passes it explicitly. A relative
+    /// `executor.toml` (what this was while the agent was Windows-only) would
+    /// resolve against the service's working directory, which is `/`.
     pub fn default_path() -> PathBuf {
         if cfg!(windows) {
             PathBuf::from(r"C:\ProgramData\PkiExecutor\config.toml")
         } else {
-            PathBuf::from("executor.toml")
+            PathBuf::from("/etc/pki-executor/config.toml")
         }
     }
 

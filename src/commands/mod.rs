@@ -2,6 +2,7 @@ mod ca;
 mod cert_enroll;
 mod cert_store;
 mod cert_verify;
+mod certsecure;
 mod dc;
 mod dns;
 mod domain;
@@ -11,6 +12,8 @@ mod hostname_read;
 mod hostname_rename;
 mod iis;
 mod ip;
+#[cfg(unix)]
+mod linux;
 mod ocsp;
 mod pki_verify;
 mod system;
@@ -27,6 +30,14 @@ use crate::registry::CommandRegistry;
 /// command lands with its readiness check already dispatchable. The catalog
 /// is mirrored in the backend's `_COMMAND_CAPABILITIES`; both sides assert
 /// against the shared fixture in `tests/fixtures/command_catalog.json`.
+///
+/// The list is unconditional, including the Linux product commands: the
+/// catalog is a cross-repo contract asserted against one shared fixture, so a
+/// command that existed on only one platform would make that fixture
+/// unassertable on the other. Platform differences are expressed by *layering*
+/// instead — the `cfg(unix)` block at the end re-registers the Linux
+/// implementations of shared names, and `register` overwrites by name, so the
+/// name and capability set this returns is identical on both.
 pub fn build_default_registry() -> CommandRegistry {
     let mut registry = CommandRegistry::new();
     registry.register(Box::new(hostname_rename::HostnameRename));
@@ -65,5 +76,24 @@ pub fn build_default_registry() -> CommandRegistry {
     registry.register(Box::new(cert_enroll::CertEnroll));
     registry.register(Box::new(pki_verify::PkiVerify));
     registry.register(Box::new(system_identity::SystemIdentity));
+    registry.register(Box::new(certsecure::AptRefresh));
+    registry.register(Box::new(certsecure::CertSecureWriteHosts));
+    registry.register(Box::new(certsecure::CertSecureMakeCert));
+    registry.register(Box::new(certsecure::CertSecureInstall));
+    registry.register(Box::new(certsecure::CertSecureHarden));
+    registry.register(Box::new(certsecure::CertSecureVerify));
+
+    // Layered, not forked: every name below is already registered above, so
+    // this replaces behaviour without touching the catalog.
+    #[cfg(unix)]
+    {
+        registry.register(Box::new(linux::HostnameRead));
+        registry.register(Box::new(linux::SystemIdentity));
+        registry.register(Box::new(linux::SystemReboot));
+        registry.register(Box::new(linux::SystemBootInfo::default()));
+        registry.register(Box::new(linux::FileRead));
+        registry.register(Box::new(linux::FileWrite));
+    }
+
     registry
 }

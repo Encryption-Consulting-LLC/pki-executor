@@ -40,5 +40,10 @@ tempfile = "3"
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"
 
+# `flock` for the single-instance guard on the Linux guests. The Windows half
+# uses share-mode-0 via `std::os::windows`, which needs no crate.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tempfile = "3"

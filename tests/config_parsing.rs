@@ -41,7 +41,7 @@ fn execution_defaults_apply_when_section_omitted() {
     let expected_shell = if cfg!(windows) {
         "powershell.exe"
     } else {
-        "pwsh"
+        "/bin/bash"
     };
     assert_eq!(config.execution.shell_binary, expected_shell);
     assert_eq!(config.execution.script_timeout_secs, 900);

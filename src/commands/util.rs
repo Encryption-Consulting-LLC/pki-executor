@@ -101,3 +101,21 @@ pub fn valid_dns_name(name: &str) -> bool {
                 && !label.ends_with('-')
         })
 }
+
+/// A plain absolute POSIX path (`/opt/...`) with the same conservative
+/// character set [`valid_windows_path`] enforces — the Linux half of the same
+/// defence-in-depth rule, since path params reach `bash` as `"$1"` either way.
+///
+/// Deliberately *not* a relaxation of the Windows validator into one
+/// permissive check: a Windows handler accepting `/etc/passwd` (or a Linux one
+/// accepting `C:\Windows\...`) would silently widen the relay allowlists,
+/// which are prefix matches against these shapes.
+pub fn valid_posix_path(path: &str) -> bool {
+    let mut chars = path.chars();
+    if chars.next() != Some('/') {
+        return false;
+    }
+    !path.is_empty()
+        && path.len() <= 200
+        && chars.all(|c| c.is_ascii_alphanumeric() || " ._-/".contains(c))
+}

@@ -121,6 +121,90 @@ impl PowerShellExecutor for RealPowerShell {
     }
 }
 
+/// Shells out to a POSIX shell (default `/bin/bash`) for the Linux templates.
+///
+/// A sibling of [`RealPowerShell`] rather than a `shell_binary` override of it:
+/// that impl hardcodes `-NoProfile -NonInteractive -ExecutionPolicy Bypass
+/// -File`, none of which a POSIX shell understands, so pointing `shell_binary`
+/// at `bash` would have every handler fail on the flags before the script ran.
+///
+/// Same contract as the PowerShell path in the two ways handlers depend on:
+/// the script is written to a temp file and passed as a *file* (never `-c`),
+/// and `args` bind positionally — as `$1`, `$2`, … rather than a `param()`
+/// block — so untrusted parameter text is never re-parsed as shell syntax.
+pub struct RealPosixShell {
+    pub binary: String,
+}
+
+impl RealPosixShell {
+    pub fn new(binary: impl Into<String>) -> Self {
+        Self {
+            binary: binary.into(),
+        }
+    }
+}
+
+impl PowerShellExecutor for RealPosixShell {
+    fn run(
+        &self,
+        script: &str,
+        args: &[String],
+    ) -> Result<PowerShellOutput, PowerShellError> {
+        let mut file = tempfile::Builder::new()
+            .prefix("pki-executor-")
+            .suffix(".sh")
+            .tempfile()
+            .map_err(|source| PowerShellError::TempScript { source })?;
+        std::io::Write::write_all(&mut file, script.as_bytes())
+            .map_err(|source| PowerShellError::TempScript { source })?;
+        // Closed before the interpreter reads it, for the same reason the
+        // PowerShell path does it: the handle is ours, the read is the shell's.
+        // The mode is left at the tempfile default (0600) — the script is
+        // handed to the interpreter by path, so it never needs to be
+        // executable, and a world-readable one would leak whatever secret a
+        // handler interpolated into it.
+        let path = file.into_temp_path();
+
+        let output = Command::new(&self.binary)
+            .arg(&path)
+            .args(args)
+            .output()
+            .map_err(|source| PowerShellError::Spawn {
+                binary: self.binary.clone(),
+                source,
+            })?;
+
+        Ok(PowerShellOutput {
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            exit_code: output.status.code().unwrap_or(-1),
+        })
+    }
+}
+
+/// Build the executor for `binary`, picking the implementation from the
+/// *interpreter* rather than from the host OS.
+///
+/// The two impls differ only in how a script file and its arguments are handed
+/// over, which is a property of the interpreter: `powershell.exe` and `pwsh`
+/// need `-NoProfile -NonInteractive -ExecutionPolicy Bypass -File`, a POSIX
+/// shell needs the path alone. Selecting on the name therefore keeps the
+/// documented Linux-dev workflow working — point `shell_binary` at `pwsh` on a
+/// dev box and the Windows handlers still run — while a Linux guest, whose
+/// default is now `/bin/bash`, gets the POSIX path with no config to set.
+pub fn build_shell(binary: &str) -> std::sync::Arc<dyn PowerShellExecutor> {
+    let stem = std::path::Path::new(binary)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(binary)
+        .to_ascii_lowercase();
+    if matches!(stem.as_str(), "powershell" | "pwsh") {
+        std::sync::Arc::new(RealPowerShell::new(binary))
+    } else {
+        std::sync::Arc::new(RealPosixShell::new(binary))
+    }
+}
+
 /// Returns pre-programmed responses in FIFO order, and records every script
 /// it was asked to run — for tests only.
 #[derive(Default)]
@@ -209,6 +293,26 @@ mod tests {
         let shell = RealPowerShell::new("powershell.exe");
         let output = shell.run("$PSVersionTable.PSVersion.Major", &[]).unwrap();
         assert!(output.succeeded());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn real_posix_shell_runs_a_script_and_binds_positional_args() {
+        let shell = RealPosixShell::new("/bin/sh");
+        let output = shell
+            .run("printf '%s' \"$1\"", &["bound".to_string()])
+            .unwrap();
+        assert!(output.succeeded());
+        assert_eq!(output.stdout, "bound");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn real_posix_shell_reports_a_nonzero_exit() {
+        let shell = RealPosixShell::new("/bin/sh");
+        let output = shell.run("exit 7", &[]).unwrap();
+        assert_eq!(output.exit_code, 7);
+        assert!(!output.succeeded());
     }
 
     // Regression: `-Command` never bound args to `param()` (they re-parsed
